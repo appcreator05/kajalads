@@ -304,16 +304,6 @@ export const KeystoreSection: React.FC<KeystoreSectionProps> = ({
                 <div className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full animate-pulse w-3/4" />
               </div>
             </div>
-          ) : justGenerated ? (
-            <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2.5 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <div className="text-[11px]">
-                <span className="font-semibold text-white">Keystore Successfully Generated &amp; Added!</span>
-                <span className="block text-emerald-300/90 mt-0.5">
-                  <code className="text-white font-mono font-bold">AppCreator05.keystore</code> is attached and ready for production APK &amp; Play Store signing.
-                </span>
-              </div>
-            </div>
           ) : null}
         </div>
       )}
