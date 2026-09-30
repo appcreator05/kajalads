@@ -1,0 +1,8 @@
+{
+  "name": "AppCreator05",
+  "description": "Directly download Android APK (.apk) and Play Store AAB (.aab) files from any website URL with 100% fullscreen immersive mode, real AdMob & Start.io ads, custom keystore, AppCreator05 automated Cloud APK build, and instant mobile installation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

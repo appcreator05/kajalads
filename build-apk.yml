@@ -1,0 +1,90 @@
+name: Build AppCreator05 Android App
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install NPM Dependencies
+        run: npm install
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+
+      - name: Sync Web Assets to Android App
+        run: |
+          mkdir -p android/app/src/main/assets/web
+          cp -r dist/* android/app/src/main/assets/web/
+          echo "Web assets synced to android assets folder."
+
+      - name: Build Android Release APK
+        run: |
+          cd android
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Prepare Single APK for Release
+        run: |
+          mkdir -p build-output
+          # Copy signed, production-ready release APK as AppCreator05.apk
+          cp android/app/build/outputs/apk/release/app-release.apk build-output/AppCreator05.apk
+          echo "AppCreator05 release APK prepared successfully:"
+          ls -la build-output/
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppCreator05
+          path: build-output/AppCreator05.apk
+          retention-days: 30
+
+      - name: Publish to GitHub Releases (Direct 1-Click APK Download)
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-output/AppCreator05.apk
+          tag_name: v1.0.0
+          name: "AppCreator05 v1.0.0 (Direct APK Download)"
+          body: |
+            ## 📱 AppCreator05 Android App
+            
+            Install AppCreator05 on your Android phone to convert any website into a high-performance Android APK directly from your mobile device!
+            
+            ### 📥 Download & Install:
+            1. Under **Assets** below, click on **`AppCreator05.apk`** to download directly to your mobile phone.
+            2. Tap the file in your phone's Downloads and click **Install**.
+          draft: false
+          prerelease: false
+          make_latest: true

@@ -1,0 +1,10 @@
+{
+  "appId": "com.webtoapk.creator",
+  "appName": "APK Creator",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
