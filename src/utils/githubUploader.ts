@@ -9,12 +9,77 @@ export interface GitHubCredentials {
 const STORAGE_KEY_TOKEN = 'webtoapk_github_token';
 const STORAGE_KEY_REPO = 'webtoapk_github_repo';
 
+export const DB_USER_REPO = "shortsproeran-creator/mt";
+
+export const getActiveCloudToken = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_TOKEN);
+    if (saved && saved.trim() && saved !== 'true' && saved !== 'false' && saved.length > 5) {
+      return saved.trim();
+    }
+  } catch {}
+  return (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GITHUB_TOKEN) || '';
+};
+
+export const saveUserGitHubToken = (token: string) => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY_TOKEN, token.trim());
+  }
+};
+
 const DEFAULT_TOKEN =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GITHUB_TOKEN) ||
-  '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';
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GITHUB_TOKEN) || '';
 const DEFAULT_REPO =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GITHUB_REPO) ||
-  'https://github.com/appcreator05/25';
+  DB_USER_REPO;
+
+/**
+ * Direct file upload to GitHub Contents API as requested by user
+ */
+export async function uploadToUserGitHub(
+  fileBlob: Blob,
+  fileName: string,
+  explicitToken?: string,
+  onStatus?: (msg: string) => void
+): Promise<{ downloadUrl: string; fileName: string }> {
+  const token = (explicitToken || getActiveCloudToken()).trim();
+  if (!token) {
+    throw new Error('GitHub Token প্রয়োজন! অনুগ্রহ করে নিচের বক্সে আপনার GitHub Token টি পেস্ট করে Save করুন।');
+  }
+
+  onStatus?.('Uploading APK to GitHub repository...');
+  
+  // Base64 content
+  const rawBase64 = await blobToBase64(fileBlob);
+  const content = rawBase64.includes(',') ? rawBase64.split(',')[1] : rawBase64;
+  
+  // Unique file name with timestamp
+  const uniqueName = Date.now() + "_" + fileName.replace(/\s+/g, '_');
+  const url = `https://api.github.com/repos/${DB_USER_REPO}/contents/${uniqueName}`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `token ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message: `Upload: ${uniqueName}`,
+      content: content,
+    }),
+  });
+
+  const data = await response.json();
+  if (response.ok && data?.content?.download_url) {
+    return {
+      downloadUrl: data.content.download_url,
+      fileName: uniqueName,
+    };
+  }
+
+  throw new Error(data?.message || 'GitHub upload failed');
+}
 
 export function getSavedGitHubConfig(): GitHubCredentials {
   if (typeof window === 'undefined') return { token: DEFAULT_TOKEN, repo: DEFAULT_REPO };
@@ -92,12 +157,9 @@ export function parseOwnerAndRepo(repoString: string): { owner: string; repo: st
   if (parts.length >= 2 && parts[0] && parts[1]) {
     const owner = parts[0].trim();
     const repo = parts[1].trim();
-    if (owner.includes('tra105') || repo.includes('tra105')) {
-      return { owner: 'appcreator05', repo: '25' };
-    }
     return { owner, repo };
   }
-  return { owner: parts[0]?.trim() || 'appcreator05', repo: parts[1]?.trim() || '25' };
+  return { owner: parts[0]?.trim() || 'shortsproeran-creator', repo: parts[1]?.trim() || 'mt' };
 }
 
 export interface GitHubUploadResult {

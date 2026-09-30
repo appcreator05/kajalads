@@ -618,8 +618,8 @@ async function startServer() {
     });
   });
 
-  const DEFAULT_GITHUB_TOKEN = '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';
-  const DEFAULT_GITHUB_REPO = 'https://github.com/appcreator05/25';
+  const DEFAULT_GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+  const DEFAULT_GITHUB_REPO = process.env.GITHUB_REPO || 'shortsproeran-creator/mt';
 
   function parseGitHubOwnerAndRepo(rawOwner?: string, rawRepo?: string): { owner: string; repo: string } {
     let candidate = (rawRepo || '').trim();

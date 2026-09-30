@@ -34,6 +34,8 @@ import {
   getSavedGitHubConfig,
   saveGitHubConfig,
   checkServerGitHubConfig,
+  getActiveCloudToken,
+  DB_USER_REPO,
 } from '../utils/githubUploader';
 import {
   openInChromeCustomTabs,
@@ -89,14 +91,14 @@ export const OkSaveModal: React.FC<OkSaveModalProps> = ({
     const t = getSavedGitHubConfig().token;
     return typeof t === 'string' && t !== 'true' && t !== 'false' && t.length > 5
       ? t
-      : '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';
+      : getActiveCloudToken();
   });
   const [githubRepo, setGithubRepo] = useState<string>(() => {
     const r = getSavedGitHubConfig().repo;
     if (typeof r === 'string' && r !== 'true' && r !== 'false' && !r.includes('tra105') && !r.includes('my-android-app') && r) {
       return r;
     }
-    return 'https://github.com/appcreator05/25';
+    return DB_USER_REPO;
   });
   const [isUploadingToGitHub, setIsUploadingToGitHub] = useState(false);
 
@@ -173,8 +175,8 @@ export const OkSaveModal: React.FC<OkSaveModalProps> = ({
         if (rawRepo.includes('tra105') || rawRepo.includes('my-android-app')) {
           rawRepo = 'https://github.com/appcreator05/25';
         }
-        const activeToken = rawToken || configCreds.token || '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';
-        const activeRepo = rawRepo || configCreds.repo || 'https://github.com/appcreator05/25';
+        const activeToken = rawToken || configCreds.token || getActiveCloudToken();
+        const activeRepo = rawRepo || configCreds.repo || DB_USER_REPO;
 
         const result = await uploadBothPackages(
           apk,
@@ -216,8 +218,8 @@ export const OkSaveModal: React.FC<OkSaveModalProps> = ({
     if (rawRepo.includes('tra105') || rawRepo.includes('my-android-app')) {
       rawRepo = 'https://github.com/appcreator05/25';
     }
-    const activeToken = rawToken || configCreds.token || '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';
-    const activeRepo = rawRepo || configCreds.repo || 'https://github.com/appcreator05/25';
+    const activeToken = rawToken || configCreds.token || getActiveCloudToken();
+    const activeRepo = rawRepo || configCreds.repo || DB_USER_REPO;
 
     if (!activeToken) {
       onToast('Please provide your AppCreator05 Cloud Access Token');
@@ -1088,7 +1090,7 @@ export const OkSaveModal: React.FC<OkSaveModalProps> = ({
                                       type="password"
                                       value={githubToken}
                                       onChange={(e) => setGithubToken(e.target.value)}
-                                      placeholder="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"
+                                      placeholder="GitHub Access Token (Optional)"
                                       className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 font-mono"
                                     />
                                   </div>

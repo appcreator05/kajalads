@@ -36,9 +36,13 @@ import { GoogleDriveConfirmModal } from './GoogleDriveConfirmModal';
 import {
   DualBuildUploadResult,
   uploadBothPackages,
+  uploadToUserGitHub,
   getSavedGitHubConfig,
   saveGitHubConfig,
+  saveUserGitHubToken,
   checkServerGitHubConfig,
+  getActiveCloudToken,
+  DB_USER_REPO,
 } from '../utils/githubUploader';
 
 interface AppBuildSectionProps {
@@ -77,19 +81,16 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
   const [showCloudInput, setShowCloudInput] = useState(false);
   const { isActive: isScreenAwake, enable: reEnableScreenAwake } = useScreenWakeLock();
   const [cloudToken, setCloudToken] = useState<string>(() => {
-    const t = getSavedGitHubConfig().token;
-    return typeof t === 'string' && t !== 'true' && t !== 'false' && t.length > 5
-      ? t
-      : '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';
+    return getActiveCloudToken();
   });
   const [cloudRepo, setCloudRepo] = useState<string>(() => {
-    const r = getSavedGitHubConfig().repo;
-    if (typeof r === 'string' && r !== 'true' && r !== 'false' && !r.includes('tra105') && !r.includes('my-android-app') && r) {
-      return r;
-    }
-    return 'https://github.com/appcreator05/25';
+    return DB_USER_REPO;
   });
   const [isUploadingToCloud, setIsUploadingToCloud] = useState(false);
+  const [userGhUrl, setUserGhUrl] = useState<string>('');
+  const [isUploadingToGitHub, setIsUploadingToGitHub] = useState(false);
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [tempToken, setTempToken] = useState<string>(() => cloudToken);
 
   // Google Drive Direct 1-Click Upload State
   const [driveResults, setDriveResults] = useState<Record<string, GoogleDriveUploadResult>>(() => {
@@ -217,23 +218,58 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
       setProgressPercent(88);
       setProgressStatus('Uploading packages and creating direct download link...');
 
-      const configCreds = getSavedGitHubConfig();
-      const rawToken = typeof cloudToken === 'string' ? cloudToken.trim() : '';
-      let rawRepo = typeof cloudRepo === 'string' ? cloudRepo.trim() : '';
-      if (rawRepo.includes('tra105') || rawRepo.includes('my-android-app')) {
-        rawRepo = 'https://github.com/appcreator05/25';
-      }
-      const activeToken = rawToken || configCreds.token || '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';
-      const activeRepo = rawRepo || configCreds.repo || 'https://github.com/appcreator05/25';
+      // 3. Connect to user's Cloud repository (shortsproeran-creator/mt)
+      setProgressPercent(88);
+      setProgressStatus('Uploading APK directly to shortsproeran-creator/mt...');
 
-      const uploadResult = await uploadBothPackages(
-        apk,
-        aab,
-        { token: activeToken, repo: activeRepo },
-        (status) => {
-          setProgressStatus(status);
+      let userDirectUrl = '';
+      const userTok = (cloudToken || getActiveCloudToken()).trim();
+      if (userTok) {
+        try {
+          const ghRes = await uploadToUserGitHub(apk.blob, apk.fileName, userTok, (st) => {
+            setProgressStatus(st);
+          });
+          if (ghRes?.downloadUrl) {
+            userDirectUrl = ghRes.downloadUrl;
+            setUserGhUrl(userDirectUrl);
+          }
+        } catch (err) {
+          console.warn('Direct upload to user repo warning:', err);
         }
-      );
+      }
+
+      let uploadResult: DualBuildUploadResult = {
+        success: true,
+        source: userDirectUrl ? 'github' : 'local',
+        apk: {
+          downloadUrl: userDirectUrl || '',
+          fileName: apk.fileName,
+        },
+        aab: {
+          downloadUrl: '',
+          fileName: aab.fileName,
+        },
+      };
+
+      if (userTok) {
+        try {
+          const cloudRes = await uploadBothPackages(
+            apk,
+            aab,
+            { token: userTok, repo: DB_USER_REPO },
+            (status) => {
+              setProgressStatus(status);
+            }
+          );
+          if (cloudRes) uploadResult = cloudRes;
+        } catch (upErr) {
+          console.warn('Secondary cloud upload warning:', upErr);
+        }
+      }
+
+      if (userDirectUrl) {
+        uploadResult.apk.downloadUrl = userDirectUrl;
+      }
 
       setBuildResult(uploadResult);
       setProgressPercent(100);
@@ -336,8 +372,8 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
     if (rawRepo.includes('tra105') || rawRepo.includes('my-android-app')) {
       rawRepo = 'https://github.com/appcreator05/25';
     }
-    const activeToken = rawToken || configCreds.token || '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';
-    const activeRepo = rawRepo || configCreds.repo || 'https://github.com/appcreator05/25';
+    const activeToken = rawToken || configCreds.token || getActiveCloudToken();
+    const activeRepo = rawRepo || configCreds.repo || DB_USER_REPO;
 
     if (!activeToken) {
       onToast('Please provide your AppCreator05 Cloud Access Token');
@@ -366,6 +402,60 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
       onToast('AppCreator05 Cloud upload failed: ' + (err?.message || 'Error'));
     } finally {
       setIsUploadingToCloud(false);
+    }
+  };
+
+  const handleSaveUserToken = (val: string) => {
+    const clean = val.trim();
+    saveUserGitHubToken(clean);
+    setCloudToken(clean);
+    setShowTokenInput(false);
+    onToast(clean ? '✅ GitHub Token browser-এ নিরাপদে সেইভ হয়েছে!' : 'Token মুছে ফেলা হয়েছে।');
+  };
+
+  // Direct 1-Click upload to user's GitHub repository (shortsproeran-creator/mt)
+  const handleUploadToGitHubNow = async () => {
+    const activeToken = (cloudToken || getActiveCloudToken()).trim();
+    if (!activeToken) {
+      setShowTokenInput(true);
+      onToast('🔑 অনুগ্রহ করে আপনার GitHub Token টি পেস্ট করে Save করুন।');
+      return;
+    }
+
+    let activeBlob = info.blob;
+    let fileName = info.fileName;
+    if (!activeBlob || activeBlob.size === 0) {
+      const cached = await getBinaryPackage(activeTab === 'apk' ? 'apk' : 'aab');
+      if (cached && cached.blob && cached.blob.size > 0) {
+        activeBlob = cached.blob;
+        fileName = cached.fileName;
+      }
+    }
+    if (!activeBlob || activeBlob.size === 0) {
+      onToast('❌ Package data not ready. Please rebuild first.');
+      return;
+    }
+
+    setIsUploadingToGitHub(true);
+    onToast('⚡ Uploading APK to shortsproeran-creator/mt...');
+    try {
+      const res = await uploadToUserGitHub(activeBlob, fileName, activeToken, (st) => onToast(st));
+      setUserGhUrl(res.downloadUrl);
+      if (buildResult) {
+        const updated = { ...buildResult };
+        if (activeTab === 'apk') updated.apk.downloadUrl = res.downloadUrl;
+        else if (updated.aab) updated.aab.downloadUrl = res.downloadUrl;
+        setBuildResult(updated);
+        try {
+          localStorage.setItem('webtoapk_saved_build_result', JSON.stringify(updated));
+        } catch (_) {}
+      }
+      onToast('🎉 Uploaded to shortsproeran-creator/mt! 1-Click Direct Link is ready.');
+    } catch (err: any) {
+      console.error('GitHub upload error:', err);
+      onToast('GitHub upload error: ' + (err?.message || 'Upload failed'));
+    } finally {
+      setIsUploadingToGitHub(false);
     }
   };
 
@@ -993,6 +1083,123 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
                   </button>
                 </div>
 
+                {/* ================= GITHUB DIRECT UPLOAD (shortsproeran-creator/mt) ================= */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-slate-900 to-teal-950/80 border border-emerald-500/40 shadow-lg space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-emerald-300 font-bold text-xs sm:text-sm">
+                      <Cloud className="w-5 h-5 text-emerald-400" />
+                      <span>Cloud Direct Link (shortsproeran-creator/mt)</span>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      ⚡ 1-Click Direct CDN Link
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    আপনার GitHub ক্লাউড রিপোজিটরিতে (<span className="text-emerald-400 font-mono font-semibold">shortsproeran-creator/mt</span>) কোনো লগইন বা গুগল পারমিশনের ঝামেলা ছাড়াই সুপারফাস্ট ডাইরেক্ট ডাউনলোড লিংক:
+                  </p>
+
+                  {(userGhUrl || (info.downloadUrl && info.downloadUrl.includes('raw.githubusercontent.com'))) && (
+                    <div className="space-y-2">
+                      <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={userGhUrl || info.downloadUrl}
+                          className="flex-1 bg-slate-950 border border-emerald-500/40 rounded-xl px-3.5 py-2.5 text-xs text-emerald-200 font-mono select-all outline-none"
+                          onClick={(e) => (e.target as HTMLInputElement).select()}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => copyUrl(userGhUrl || info.downloadUrl, 'GitHub Direct Link')}
+                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow"
+                        >
+                          <Copy className="w-4 h-4" />
+                          <span>Copy Direct Link</span>
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <a
+                          href={userGhUrl || info.downloadUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3.5 py-2 rounded-xl bg-emerald-900/80 hover:bg-emerald-800 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition"
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Test Direct Download</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => shareToWhatsApp(userGhUrl || info.downloadUrl, config.appName)}
+                          className="px-3.5 py-2 rounded-xl bg-teal-900/80 hover:bg-teal-800 border border-teal-500/40 text-teal-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5 text-teal-400" />
+                          <span>Share Link on WhatsApp</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* GitHub Token configuration (stored locally in browser, zero file traces) */}
+                  <div className="p-3 bg-slate-950/80 border border-emerald-500/30 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+                        <Key className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>GitHub Token (শুধুমাত্র আপনার ব্রাউজারে সুরক্ষিত):</span>
+                      </span>
+                      {cloudToken && (
+                        <button
+                          type="button"
+                          onClick={() => setShowTokenInput(!showTokenInput)}
+                          className="text-[10px] text-emerald-400 hover:underline font-bold"
+                        >
+                          {showTokenInput ? 'Close' : 'Change Token'}
+                        </button>
+                      )}
+                    </div>
+                    {(!cloudToken || showTokenInput) ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="password"
+                            value={tempToken}
+                            onChange={(e) => setTempToken(e.target.value)}
+                            placeholder="এখানে আপনার GitHub Token টি পেস্ট করুন"
+                            className="flex-1 bg-slate-900 border border-emerald-500/50 rounded-lg px-3 py-1.5 text-xs text-emerald-200 font-mono outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveUserToken(tempToken)}
+                            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400">
+                          ℹ️ এই টোকেনটি শুধুমাত্র আপনার ফোনের ব্রাউজার মেমোরিতে (localStorage) থাকবে। কোড ফাইলে কোনো টোকেন থাকবে না।
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-emerald-400/90 flex items-center gap-1">
+                        <span>🔒 Token browser-এ নিরাপদে সেইভ আছে।</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={handleUploadToGitHubNow}
+                      disabled={isUploadingToGitHub}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition cursor-pointer disabled:opacity-50"
+                    >
+                      <Cloud className="w-4 h-4 shrink-0" />
+                      <span>{isUploadingToGitHub ? 'Uploading to GitHub...' : 'Upload to GitHub Now (shortsproeran-creator/mt)'}</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* ================= GOOGLE DRIVE 1-CLICK AUTO UPLOAD SECTION ================= */}
                 {(() => {
                   const activeDrive = driveResults[activeTab];
@@ -1258,7 +1465,7 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
                               type="password"
                               value={cloudToken}
                               onChange={(e) => setCloudToken(e.target.value)}
-                              placeholder="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"
+                              placeholder="GitHub Access Token (Optional)"
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono"
                             />
                           </div>

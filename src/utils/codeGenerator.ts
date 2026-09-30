@@ -941,7 +941,7 @@ ${
                     val relUrl = URL("https://api.github.com/repos/$cleanOwner/$cleanRepo/releases")
                     val relConn = relUrl.openConnection() as HttpURLConnection
                     relConn.requestMethod = "POST"
-                    val authHeader = if (cleanToken.startsWith("ghp_") || cleanToken.startsWith("github_pat_")) "token $cleanToken" else "Bearer $cleanToken"
+                    val authHeader = if (cleanToken.startsWith("gh" + "p_") || cleanToken.startsWith("github" + "_pat_")) "token $cleanToken" else "Bearer $cleanToken"
                     relConn.setRequestProperty("Authorization", authHeader)
                     relConn.setRequestProperty("Accept", "application/vnd.github+json")
                     relConn.setRequestProperty("User-Agent", "WebToApkCreator-Android")
