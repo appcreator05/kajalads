@@ -26,6 +26,7 @@ let cachedUser: User | null = null;
 export interface GoogleDriveUploadResult {
   fileId: string;
   fileName: string;
+  folderName: string;
   webViewLink: string;
   directDownloadUrl: string;
   uploadedAt: number;
@@ -109,14 +110,15 @@ export async function uploadToGoogleDrive(
     throw new Error('Authentication required: Could not connect to Google Drive.');
   }
 
-  onStatusUpdate?.('Uploading package to Google Drive...');
+  onStatusUpdate?.('Uploading package directly to your Google Drive (My Drive)...');
 
   // 1. Prepare Multipart Upload for Google Drive REST API v3
   const boundary = '-------314159265358979323846';
   const delimiter = `\r\n--${boundary}\r\n`;
   const closeDelimiter = `\r\n--${boundary}--`;
 
-  const metadata = {
+  // Placed directly in root "My Drive" for instant visibility in Google Drive app & web
+  const metadata: any = {
     name: fileName,
     mimeType: 'application/vnd.android.package-archive',
     description: 'Built with AppCreator05',
@@ -195,6 +197,7 @@ export async function uploadToGoogleDrive(
   return {
     fileId,
     fileName: fileData.name || fileName,
+    folderName: 'My Drive (আমার ড্রাইভ)',
     webViewLink,
     directDownloadUrl,
     uploadedAt: Date.now(),

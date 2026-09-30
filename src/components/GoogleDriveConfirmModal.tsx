@@ -65,6 +65,10 @@ export const GoogleDriveConfirmModal: React.FC<GoogleDriveConfirmModalProps> = (
             <span className="text-slate-400">Application:</span>
             <span className="font-semibold text-emerald-400">{appName}</span>
           </div>
+          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <span className="text-slate-400">Destination:</span>
+            <span className="font-semibold text-blue-400">Google Drive &gt; My Drive (আমার ড্রাইভ)</span>
+          </div>
           {fileSizeMb !== undefined && fileSizeMb > 0 && (
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="text-slate-400">Approx Size:</span>

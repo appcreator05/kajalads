@@ -1008,6 +1008,10 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
                             Public 1-Click Link
                           </span>
                         </div>
+                        <div className="flex items-center gap-2 text-[11px] text-blue-300/90 bg-slate-950/80 border border-blue-500/30 px-3 py-1.5 rounded-xl w-fit">
+                          <span className="text-slate-400">📁 Location:</span>
+                          <span className="font-mono font-semibold text-blue-200">{activeDrive.folderName || 'My Drive (আমার ড্রাইভ)'}</span>
+                        </div>
                         <p className="text-xs text-slate-300 leading-relaxed">
                           ইউজাররা এই লিংকে ক্লিক করলেই কোনো সমস্যা ছাড়াই সরাসরি আপনার গুগল ড্রাইভ থেকে অ্যাপ ডাউনলোড করতে পারবে:
                         </p>
