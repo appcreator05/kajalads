@@ -45,6 +45,25 @@
       };
     </script>
     <script type="text/javascript" src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
+    <!-- Early Screen Wake Lock initialization to keep display alive immediately -->
+    <script>
+      (function() {
+        let wakeLock = null;
+        async function acquire() {
+          try {
+            if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
+              wakeLock = await navigator.wakeLock.request('screen');
+            }
+          } catch(e) {}
+        }
+        acquire();
+        document.addEventListener('visibilitychange', function() {
+          if (document.visibilityState === 'visible') acquire();
+        });
+        window.addEventListener('touchstart', acquire, { passive: true });
+        window.addEventListener('pointerdown', acquire, { passive: true });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {

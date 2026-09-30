@@ -20,6 +20,7 @@ import { exportAndroidProjectZip } from './utils/zipExporter';
 import { downloadBlobOrFile, openInChromeCustomTabs } from './utils/fileDownloader';
 import { getSavedLanguage } from './utils/translator';
 import { persistAppConfig, restoreAppConfig } from './utils/persistentStorage';
+import { enableScreenWakeLock } from './utils/wakeLock';
 import {
   Sparkles,
   Download,
@@ -96,6 +97,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    enableScreenWakeLock();
     restoreAppConfig().then((restored) => {
       if (restored) {
         setConfig((prev) => ({ ...prev, ...restored }));

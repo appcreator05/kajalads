@@ -74,10 +74,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        try {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (::webView.isInitialized) {
+                webView.keepScreenOn = true
+            }
+        } catch (_: Exception) {}
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun initApp() {
         // Hide default action bar safely
         supportActionBar?.hide()
+
+        // Keep screen always ON - prevents device display from sleeping during compilation, build and downloads
+        try {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } catch (_: Exception) {}
 
         // Read app_config.json if packaged in assets
         var appTitle = "AppCreator05"
@@ -131,6 +146,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            keepScreenOn = true
         }
 
         webView = WebView(this).apply {
@@ -138,6 +154,7 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
+            keepScreenOn = true
         }
         rootLayout.addView(webView)
 

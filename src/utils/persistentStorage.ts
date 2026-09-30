@@ -145,3 +145,54 @@ export async function restoreAppConfig(): Promise<AppConfig> {
 
   return baseConfig;
 }
+
+/**
+ * Stores compiled binary package (APK or AAB Blob) directly in IndexedDB.
+ * Prevents loss of binary data on page refresh/tab change.
+ */
+export async function saveBinaryPackage(
+  key: 'apk' | 'aab',
+  blob: Blob,
+  fileName: string
+): Promise<void> {
+  if (!blob) return;
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      store.put({ blob, fileName, savedAt: Date.now() }, `pkg_${key}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Failed to save binary package to IndexedDB:', err);
+  }
+}
+
+/**
+ * Retrieves stored binary package (APK or AAB Blob) from IndexedDB.
+ */
+export async function getBinaryPackage(
+  key: 'apk' | 'aab'
+): Promise<{ blob: Blob; fileName: string } | null> {
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(`pkg_${key}`);
+      req.onsuccess = () => {
+        if (req.result && req.result.blob instanceof Blob && req.result.blob.size > 0) {
+          resolve({ blob: req.result.blob, fileName: req.result.fileName || `app.${key}` });
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch (_) {
+    return null;
+  }
+}
+

@@ -23,11 +23,16 @@ import {
   Wallet,
   X,
   Lock,
+  Sun,
 } from 'lucide-react';
 import { useWallet } from '../context/WalletContext';
 import { AppConfig } from '../types';
 import { buildDirectApkFile, buildDirectAabFile } from '../utils/apkBuilder';
 import { generateStandardJksBuffer } from '../utils/keystoreGenerator';
+import { enableScreenWakeLock, useScreenWakeLock } from '../utils/wakeLock';
+import { uploadToGoogleDrive, GoogleDriveUploadResult } from '../utils/googleDriveService';
+import { saveBinaryPackage, getBinaryPackage } from '../utils/persistentStorage';
+import { GoogleDriveConfirmModal } from './GoogleDriveConfirmModal';
 import {
   DualBuildUploadResult,
   uploadBothPackages,
@@ -70,6 +75,7 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
 
   // AppCreator05 Cloud config state (defaults to appcreator05/25)
   const [showCloudInput, setShowCloudInput] = useState(false);
+  const { isActive: isScreenAwake, enable: reEnableScreenAwake } = useScreenWakeLock();
   const [cloudToken, setCloudToken] = useState<string>(() => {
     const t = getSavedGitHubConfig().token;
     return typeof t === 'string' && t !== 'true' && t !== 'false' && t.length > 5
@@ -84,6 +90,27 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
     return 'https://github.com/appcreator05/25';
   });
   const [isUploadingToCloud, setIsUploadingToCloud] = useState(false);
+
+  // Google Drive Direct 1-Click Upload State
+  const [driveResults, setDriveResults] = useState<Record<string, GoogleDriveUploadResult>>(() => {
+    try {
+      const saved = localStorage.getItem('webtoapk_drive_results');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
+  const [driveUploadStatus, setDriveUploadStatus] = useState('');
+  const [showDriveConfirmModal, setShowDriveConfirmModal] = useState(false);
+  const [autoUploadToDrive, setAutoUploadToDrive] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('webtoapk_auto_drive');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
 
   const isBuildingRef = useRef(false);
 
@@ -142,6 +169,7 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
   const startBuild = async () => {
     if (isBuildingRef.current) return;
     isBuildingRef.current = true;
+    enableScreenWakeLock();
 
     setStage('loading');
     setProgressPercent(10);
@@ -174,6 +202,7 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
         setProgressStatus(status);
       });
       setApkPackage(apk);
+      await saveBinaryPackage('apk', apk.blob, apk.fileName);
 
       // 2. Build Direct AAB
       setProgressPercent(70);
@@ -182,6 +211,7 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
         setProgressStatus(status);
       });
       setAabPackage(aab);
+      await saveBinaryPackage('aab', aab.blob, aab.fileName);
 
       // 3. Connect to AppCreator05 Cloud CDN
       setProgressPercent(88);
@@ -209,6 +239,13 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
       setProgressPercent(100);
       setProgressStatus('App ready for installation & distribution!');
       setStage('completed');
+
+      // Auto-upload to Google Drive if user enabled it
+      if (autoUploadToDrive) {
+        setTimeout(() => {
+          setShowDriveConfirmModal(true);
+        }, 800);
+      }
 
       // Persist build session lock and completed result
       try {
@@ -239,35 +276,54 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
   };
 
   useEffect(() => {
+    enableScreenWakeLock();
     // Check if there is already a completed build saved in localStorage
-    try {
-      const savedResultStr = localStorage.getItem('webtoapk_saved_build_result');
-      if (savedResultStr) {
-        const parsedResult = JSON.parse(savedResultStr) as DualBuildUploadResult;
-        if (parsedResult && parsedResult.success && parsedResult.apk?.downloadUrl) {
-          const savedApkMeta = localStorage.getItem('webtoapk_saved_build_apk');
-          const savedAabMeta = localStorage.getItem('webtoapk_saved_build_aab');
-          const apkName = savedApkMeta ? JSON.parse(savedApkMeta).fileName : parsedResult.apk.fileName;
-          const aabName = savedAabMeta && parsedResult.aab ? JSON.parse(savedAabMeta).fileName : (parsedResult.aab?.fileName || '');
+    (async () => {
+      try {
+        const savedResultStr = localStorage.getItem('webtoapk_saved_build_result');
+        if (savedResultStr) {
+          const parsedResult = JSON.parse(savedResultStr) as DualBuildUploadResult;
+          if (parsedResult && parsedResult.success && parsedResult.apk?.downloadUrl) {
+            const savedApkMeta = localStorage.getItem('webtoapk_saved_build_apk');
+            const savedAabMeta = localStorage.getItem('webtoapk_saved_build_aab');
+            const apkName = savedApkMeta ? JSON.parse(savedApkMeta).fileName : parsedResult.apk.fileName;
+            const aabName = savedAabMeta && parsedResult.aab ? JSON.parse(savedAabMeta).fileName : (parsedResult.aab?.fileName || '');
 
-          setBuildResult(parsedResult);
-          setApkPackage({ blob: new Blob([]), fileName: apkName || parsedResult.apk.fileName });
-          if (parsedResult.aab) {
-            setAabPackage({ blob: new Blob([]), fileName: aabName || parsedResult.aab.fileName });
+            setBuildResult(parsedResult);
+
+            // Restore full binary package blobs from IndexedDB
+            const [storedApk, storedAab] = await Promise.all([
+              getBinaryPackage('apk'),
+              getBinaryPackage('aab'),
+            ]);
+
+            if (storedApk && storedApk.blob && storedApk.blob.size > 0) {
+              setApkPackage(storedApk);
+            } else {
+              setApkPackage({ blob: new Blob([]), fileName: apkName || parsedResult.apk.fileName });
+            }
+
+            if (storedAab && storedAab.blob && storedAab.blob.size > 0) {
+              setAabPackage(storedAab);
+            } else if (parsedResult.aab) {
+              setAabPackage({ blob: new Blob([]), fileName: aabName || parsedResult.aab.fileName });
+            }
+
+            setStage('completed');
+            setProgressPercent(100);
+            setProgressStatus('App ready for installation & distribution!');
+            localStorage.setItem('webtoapk_build_locked', 'true');
+            localStorage.setItem('webtoapk_active_view', 'build');
+            return;
           }
-          setStage('completed');
-          setProgressPercent(100);
-          setProgressStatus('App ready for installation & distribution!');
-          localStorage.setItem('webtoapk_build_locked', 'true');
-          localStorage.setItem('webtoapk_active_view', 'build');
-          return;
         }
+      } catch (e) {
+        console.warn('Could not restore saved build:', e);
       }
-    } catch (e) {
-      console.warn('Could not restore saved build:', e);
-    }
 
-    startBuild();
+      startBuild();
+    })();
+
     // Scroll to top on mount
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
@@ -313,11 +369,41 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
     }
   };
 
-  // Safe file downloader
-  const downloadBlobOrFile = (blob: Blob | null, filename: string, directUrl?: string) => {
-    if (directUrl && directUrl.startsWith('http')) {
+  // Safe file downloader: Prioritizes instant, reliable, same-origin Blob download
+  const downloadBlobOrFile = (blob: Blob | null, filename: string, fallbackUrl?: string) => {
+    // 1. If blob exists with actual binary data (> 0 bytes), download directly
+    // This is instant (0s), never blocked by popup blockers, and 100% works on Android Chrome & Safari
+    if (blob && blob.size > 0) {
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      onToast(`📥 Downloading ${filename} directly...`);
+      return;
+    }
+
+    // 2. If Google Drive direct download link is available, use it!
+    const activeDrive = driveResults[activeTab];
+    if (activeDrive?.directDownloadUrl) {
+      const link = document.createElement('a');
+      link.href = activeDrive.directDownloadUrl;
+      link.download = filename;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      onToast(`📥 Downloading ${filename} from Google Drive...`);
+      return;
+    }
+
+    // 3. Fallback to online cloud URL
+    if (fallbackUrl && fallbackUrl.startsWith('http')) {
+      const link = document.createElement('a');
+      link.href = fallbackUrl;
       link.download = filename;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
@@ -328,20 +414,60 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
       return;
     }
 
-    if (!blob) {
-      onToast('❌ Package data not ready');
+    onToast('❌ Package data not ready. Please tap Re-build.');
+  };
+
+  // Google Drive 1-Click Upload trigger & handler
+  const handleTriggerDriveUpload = () => {
+    setShowDriveConfirmModal(true);
+  };
+
+  const handleConfirmDriveUpload = async () => {
+    let targetBlob = info.blob;
+    let targetFileName = info.fileName;
+    if (!targetBlob || targetBlob.size === 0) {
+      const cached = await getBinaryPackage(activeTab === 'apk' ? 'apk' : 'aab');
+      if (cached && cached.blob && cached.blob.size > 0) {
+        targetBlob = cached.blob;
+        targetFileName = cached.fileName;
+      }
+    }
+
+    if (!targetBlob || targetBlob.size === 0) {
+      onToast('❌ Binary package not ready. Please wait or tap Re-build.');
+      setShowDriveConfirmModal(false);
       return;
     }
 
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 15000);
-    onToast(`📥 Downloading ${filename}...`);
+    setIsUploadingToDrive(true);
+    setDriveUploadStatus('Connecting to Google Drive...');
+    try {
+      const result = await uploadToGoogleDrive(targetBlob, targetFileName, (statusMsg) => {
+        setDriveUploadStatus(statusMsg);
+      });
+      const updated = { ...driveResults, [activeTab]: result };
+      setDriveResults(updated);
+      try {
+        localStorage.setItem('webtoapk_drive_results', JSON.stringify(updated));
+      } catch (_) {}
+      setShowDriveConfirmModal(false);
+      onToast('🎉 Google Drive Upload complete! Direct public download link is ready.');
+    } catch (err: any) {
+      console.error('Google Drive upload error:', err);
+      onToast('Google Drive error: ' + (err?.message || 'Upload failed'));
+    } finally {
+      setIsUploadingToDrive(false);
+      setDriveUploadStatus('');
+    }
+  };
+
+  const toggleAutoDrive = () => {
+    const next = !autoUploadToDrive;
+    setAutoUploadToDrive(next);
+    try {
+      localStorage.setItem('webtoapk_auto_drive', next ? 'true' : 'false');
+    } catch (_) {}
+    onToast(next ? '⚡ Google Drive Auto-Upload Enabled' : 'Google Drive Auto-Upload Disabled');
   };
 
   const openInChromeCustomTabs = (url: string) => {
@@ -394,7 +520,9 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
   };
 
   const shareToWhatsApp = (downloadUrl: string, appName: string) => {
-    const text = `🚀 Test my new Android App: *${appName}*!\n\nDownload the APK directly here:\n${downloadUrl}\n\nBuilt with AppCreator05`;
+    const activeDrive = driveResults[activeTab];
+    const linkToShare = activeDrive?.directDownloadUrl || downloadUrl;
+    const text = `🚀 Test my new Android App: *${appName}*!\n\nDownload the APK directly here:\n${linkToShare}\n\nBuilt with AppCreator05`;
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     window.open(waUrl, '_blank');
     onToast('💬 Opening WhatsApp Share...');
@@ -609,6 +737,14 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
         {/* Right Status Badges */}
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <span
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 shadow-sm"
+            title="Screen Stay Awake is Active: Phone screen will not go to sleep during build (স্ক্রিন সবসময় অন থাকবে)"
+          >
+            <Sun className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Screen Always ON</span>
+          </span>
+
+          <span
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30 shadow-sm"
             title="Screen is locked to Build Section until 'Back to Settings' is clicked"
           >
@@ -708,6 +844,19 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
               <div className="text-[11px] mt-0.5">{progressPercent >= 100 ? '✓ Ready' : 'Connecting...'}</div>
             </div>
           </div>
+
+          {/* Screen Stay Awake Notice for User */}
+          <div className="w-full max-w-lg p-3 rounded-2xl bg-amber-950/40 border border-amber-500/30 flex items-center justify-center gap-2.5 text-amber-200 text-xs shadow-inner">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
+            </span>
+            <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="text-left sm:text-center">
+              <span className="font-bold text-white">Screen Always ON Active: </span>
+              <span className="text-amber-300/90">বিল্ড চলাকালীন আপনার মোবাইল স্ক্রিন অফ বা স্লিপ হবে না।</span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -803,15 +952,21 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
                   </span>
                 </div>
 
-                {/* PRIMARY ACTION BUTTON */}
+                {/* PRIMARY ACTION BUTTONS */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (info.isOnlineUrl) {
-                        openInChromeCustomTabs(info.downloadUrl);
+                    onClick={async () => {
+                      let activeBlob = info.blob;
+                      if (!activeBlob || activeBlob.size === 0) {
+                        const cached = await getBinaryPackage(activeTab === 'apk' ? 'apk' : 'aab');
+                        if (cached && cached.blob && cached.blob.size > 0) {
+                          activeBlob = cached.blob;
+                          if (activeTab === 'apk') setApkPackage(cached);
+                          else setAabPackage(cached);
+                        }
                       }
-                      downloadBlobOrFile(info.blob, info.fileName, info.downloadUrl);
+                      downloadBlobOrFile(activeBlob, info.fileName, info.downloadUrl);
                     }}
                     className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-xl shadow-emerald-500/25 active:scale-[0.98] transition cursor-pointer border border-emerald-400/50"
                   >
@@ -821,7 +976,16 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => saveFileToDeviceFolder(info.blob, info.fileName)}
+                    onClick={async () => {
+                      let activeBlob = info.blob;
+                      if (!activeBlob || activeBlob.size === 0) {
+                        const cached = await getBinaryPackage(activeTab === 'apk' ? 'apk' : 'aab');
+                        if (cached && cached.blob && cached.blob.size > 0) {
+                          activeBlob = cached.blob;
+                        }
+                      }
+                      saveFileToDeviceFolder(activeBlob, info.fileName);
+                    }}
                     className="w-full py-4 px-5 rounded-2xl bg-slate-800/90 hover:bg-slate-800 text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2.5 border border-slate-700 shadow-md active:scale-[0.98] transition cursor-pointer"
                   >
                     <FolderDown className="w-5 h-5 text-teal-400 shrink-0" />
@@ -829,8 +993,126 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
                   </button>
                 </div>
 
-                {/* SECONDARY QUICK ACTIONS: WHATSAPP, GOOGLE DRIVE, MOBILE SHARE */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* ================= GOOGLE DRIVE 1-CLICK AUTO UPLOAD SECTION ================= */}
+                {(() => {
+                  const activeDrive = driveResults[activeTab];
+                  if (activeDrive) {
+                    return (
+                      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-950/90 via-slate-900 to-indigo-950/80 border border-blue-500/50 shadow-lg space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 text-blue-300 font-bold text-xs sm:text-sm">
+                            <HardDrive className="w-5 h-5 text-blue-400" />
+                            <span>Google Drive Direct Download Link (Ready)</span>
+                          </div>
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            Public 1-Click Link
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          ইউজাররা এই লিংকে ক্লিক করলেই কোনো সমস্যা ছাড়াই সরাসরি আপনার গুগল ড্রাইভ থেকে অ্যাপ ডাউনলোড করতে পারবে:
+                        </p>
+                        <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={activeDrive.directDownloadUrl}
+                            className="flex-1 bg-slate-950 border border-blue-500/40 rounded-xl px-3.5 py-2.5 text-xs text-blue-200 font-mono select-all outline-none"
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => copyUrl(activeDrive.directDownloadUrl, 'Google Drive Download')}
+                            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer shadow"
+                          >
+                            <Copy className="w-4 h-4" />
+                            <span>Copy Drive Link</span>
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <a
+                            href={activeDrive.directDownloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3.5 py-2 rounded-xl bg-blue-950/90 hover:bg-blue-900 border border-blue-500/40 text-blue-200 text-xs font-semibold flex items-center gap-1.5 transition"
+                          >
+                            <Download className="w-3.5 h-3.5 text-blue-400" />
+                            <span>Test Drive Download</span>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => shareToWhatsApp(activeDrive.directDownloadUrl, config.appName)}
+                            className="px-3.5 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Share Drive Link on WhatsApp</span>
+                          </button>
+                          <a
+                            href={activeDrive.webViewLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition ml-auto"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>View in Drive</span>
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950/50 via-slate-900 to-indigo-950/40 border border-blue-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                          <HardDrive className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span>Google Drive Direct 1-Click Auto Upload</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold">
+                              Recommended
+                            </span>
+                          </h4>
+                          <p className="text-xs text-slate-300 mt-0.5">
+                            গুগল ড্রাইভে ১-ক্লিকে আপলোড করে ইউজারদের জন্য সুপারফাস্ট পাবলিক ডাউনলোড লিংক তৈরি করুন।
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={handleTriggerDriveUpload}
+                          disabled={isUploadingToDrive}
+                          className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-400 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 active:scale-[0.98] transition cursor-pointer disabled:opacity-50"
+                        >
+                          <HardDrive className="w-4 h-4 shrink-0" />
+                          <span>{isUploadingToDrive ? 'Uploading to Drive...' : '1-Click Upload to Google Drive'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* AUTO UPLOAD TOGGLE */}
+                <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-300">
+                  <span className="flex items-center gap-2">
+                    <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Auto-upload to Google Drive after app build (বিল্ড শেষ হলে সরাসরি ড্রাইভে আপলোড)</span>
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoUploadToDrive}
+                      onChange={toggleAutoDrive}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                {/* SECONDARY QUICK ACTIONS: WHATSAPP, MOBILE SHARE */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => shareToWhatsApp(info.downloadUrl, config.appName)}
@@ -842,16 +1124,16 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => saveToGoogleDrive(info.downloadUrl)}
-                    className="py-3 px-4 rounded-xl bg-blue-950/80 hover:bg-blue-900 border border-blue-500/30 text-blue-200 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow"
-                  >
-                    <HardDrive className="w-4 h-4 text-blue-400 shrink-0" />
-                    <span>Save to Google Drive</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => shareFileOnMobile(info.blob, info.fileName, info.downloadUrl)}
+                    onClick={async () => {
+                      let activeBlob = info.blob;
+                      if (!activeBlob || activeBlob.size === 0) {
+                        const cached = await getBinaryPackage(activeTab === 'apk' ? 'apk' : 'aab');
+                        if (cached && cached.blob && cached.blob.size > 0) activeBlob = cached.blob;
+                      }
+                      const activeDrive = driveResults[activeTab];
+                      const link = activeDrive?.directDownloadUrl || info.downloadUrl;
+                      shareFileOnMobile(activeBlob, info.fileName, link);
+                    }}
                     className="py-3 px-4 rounded-xl bg-purple-950/80 hover:bg-purple-900 border border-purple-500/30 text-purple-200 font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow"
                   >
                     <Share2 className="w-4 h-4 text-purple-400 shrink-0" />
@@ -1269,6 +1551,18 @@ export const AppBuildSection: React.FC<AppBuildSectionProps> = ({
           </div>
         </div>
       )}
+
+      {/* ================= 3. POPUP: GOOGLE DRIVE UPLOAD CONFIRMATION (MANDATORY PER WORKSPACE GUIDELINES) ================= */}
+      <GoogleDriveConfirmModal
+        isOpen={showDriveConfirmModal}
+        fileName={info.fileName}
+        appName={config.appName}
+        fileSizeMb={info.blob && info.blob.size > 0 ? info.blob.size / (1024 * 1024) : undefined}
+        onConfirm={handleConfirmDriveUpload}
+        onCancel={() => setShowDriveConfirmModal(false)}
+        isUploading={isUploadingToDrive}
+        uploadStatus={driveUploadStatus}
+      />
     </div>
   );
 };

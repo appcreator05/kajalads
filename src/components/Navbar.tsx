@@ -1,7 +1,8 @@
 import React from 'react';
-import { Smartphone, HelpCircle, Sparkles, Globe } from 'lucide-react';
+import { Smartphone, HelpCircle, Sparkles, Globe, Sun } from 'lucide-react';
 import { AppConfig } from '../types';
 import { WalletBalanceButton } from './WalletBalanceButton';
+import { useScreenWakeLock } from '../utils/wakeLock';
 
 interface NavbarProps {
   config: AppConfig;
@@ -28,6 +29,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentLang = 'en',
   onLoadPreset,
 }) => {
+  const { isActive: isScreenAwake, enable: reEnableScreenAwake } = useScreenWakeLock();
+
   return (
     <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-slate-100 w-full max-w-full overflow-hidden">
       <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-4">
@@ -56,8 +59,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Center: Wallet Balance Display (as positioned in user image) */}
-        <div className="flex items-center shrink-0">
+        {/* Center: Screen Always ON Status Badge & Wallet Balance */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Always Screen ON Badge */}
+          <button
+            type="button"
+            onClick={() => reEnableScreenAwake()}
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold shadow-sm transition cursor-pointer"
+            title="Screen Always ON Active: Prevents phone display from sleeping while building apps or downloading (স্ক্রিন সবসময় অন থাকবে)"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+            </span>
+            <Sun className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="hidden sm:inline font-mono">Screen ON</span>
+          </button>
+
           <WalletBalanceButton />
         </div>
 
