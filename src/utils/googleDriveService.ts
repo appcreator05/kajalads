@@ -54,11 +54,90 @@ export function initAuth(
 }
 
 /**
+ * Ensures Google Identity Services (GIS) library is loaded
+ */
+function ensureGisLoaded(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if ((window as any).google?.accounts?.oauth2) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+    if (existing) {
+      (existing as HTMLScriptElement).addEventListener('load', () => resolve());
+      setTimeout(resolve, 800);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => resolve();
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * Obtains an OAuth access token using Google Identity Services (GIS)
+ * directly from accounts.google.com without relying on firebaseapp.com redirect handler.
+ */
+export async function requestGoogleAccessToken(): Promise<string> {
+  if (cachedAccessToken) {
+    return cachedAccessToken;
+  }
+
+  await ensureGisLoaded();
+
+  // 1. Primary: Google Identity Services token client
+  if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
+    try {
+      const token = await new Promise<string>((resolve, reject) => {
+        try {
+          const tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+            client_id: firebaseConfig.oAuthClientId,
+            scope: SCOPES.join(' '),
+            prompt: '',
+            callback: (response: any) => {
+              if (response.error) {
+                reject(new Error(response.error_description || response.error));
+              } else if (response.access_token) {
+                resolve(response.access_token);
+              } else {
+                reject(new Error('No access token received from Google authorization.'));
+              }
+            },
+            error_callback: (err: any) => {
+              reject(new Error(err?.message || 'Google authorization window was closed.'));
+            },
+          });
+          tokenClient.requestAccessToken({ prompt: '' });
+        } catch (initErr) {
+          reject(initErr);
+        }
+      });
+
+      if (token) {
+        cachedAccessToken = token;
+        return token;
+      }
+    } catch (gisError: any) {
+      console.warn('GIS Token client error, falling back to Firebase Auth:', gisError);
+      // Fall through to Firebase fallback if GIS failed
+    }
+  }
+
+  // 2. Fallback: Firebase signInWithPopup
+  const authResult = await googleSignIn();
+  return authResult.accessToken;
+}
+
+/**
  * Initiates interactive Google Sign-In with Google Drive scope.
  */
 export async function googleSignIn(): Promise<{ user: User; accessToken: string }> {
   try {
     isSigningIn = true;
+    provider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
@@ -101,9 +180,8 @@ export async function uploadToGoogleDrive(
   let token = await getAccessToken();
 
   if (!token) {
-    onStatusUpdate?.('Connecting to Google Drive...');
-    const authResult = await googleSignIn();
-    token = authResult.accessToken;
+    onStatusUpdate?.('Connecting to Google Drive via official Google service...');
+    token = await requestGoogleAccessToken();
   }
 
   if (!token) {
